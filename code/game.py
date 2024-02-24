@@ -5,7 +5,7 @@ import torch.optim as optim
 import models
 import numpy as np
 import copy
-
+import pdb
 class GuessGame:
     def __init__(self, args):
         self.args = args
@@ -35,7 +35,6 @@ class GuessGame:
         else:
             self.sbot.train()
             self.rbot.train()
-
         m, speak_log_probs, speak_p_log_p, evaluate_probs = self.sbot.speak(targetsTensor, stochastic)
 
         self.rbot.listen(m)
@@ -47,7 +46,10 @@ class GuessGame:
         mattersIndex = self.numColors + self.numShapes
         tsum = torch.LongTensor(batch).fill_(mattersIndex).to(self.device)
         psum = torch.eq(predicts[:, 0:mattersIndex], targetsTensor[:, 0:mattersIndex]).sum(1)  # true if predicts and targets match at every index
-
+        # predicts predicts color and shape, 2 1's per row
+        # targets_idx = np.argmax(targets, axis=1)
+        # candidates_idx = np.argmax(candidates, axis=2)
+        # correct_mask = (np.expand_dims(targets_idx, axis=1) == candidates_idx)
         rewards = torch.eq(tsum, psum).float()
 
         sloss = -rewards * speak_log_probs + self.slambda * speak_p_log_p
@@ -59,7 +61,8 @@ class GuessGame:
         rloss = torch.sum(rloss) / batch
 
         batch_entropy = -torch.sum(speak_p_log_p) / batch
-        return sloss, rloss, m, rewards, batch_entropy, evaluate_probs, pred_probs # evaluate_probs, pred_probs for probing languages
+        listener_entropy = -torch.sum(pred_p_log_p) / batch
+        return sloss, rloss, m, rewards, batch_entropy, listener_entropy, evaluate_probs, pred_probs # evaluate_probs, pred_probs for probing languages
 
     def backward(self, sloss, rloss, sOpt=True, rOpt=True): # sOpt is false when we do not need update sender
         if sOpt:

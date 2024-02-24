@@ -60,6 +60,7 @@ rloss_l = np.zeros(args['trainIters'] * args['deterResetNums'])
 trainAccuracy_l = np.zeros(args['trainIters'] * args['deterResetNums'])
 
 for i in range(args['trainIters'] * args['deterResetNums']):
+    print('Iteration ' + str(i)) 
     candidates, targets = data.getBatchData(train_np, args['batchSize'], args['distractNum'])
     sloss, rloss, message, rewards, _, _, _ = team.forward(targets, candidates, False, sOpt, True, False)
     team.backward(sloss, rloss, sOpt)

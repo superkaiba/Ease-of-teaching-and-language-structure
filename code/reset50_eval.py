@@ -69,6 +69,8 @@ sloss_l = np.zeros(args['trainIters'])
 rloss_l = np.zeros(args['trainIters'])
 trainAccuracy_l = np.zeros(args['trainIters'])
 entropy_l = np.zeros(args['trainIters'])
+listener_entropys = np.zeros(args['trainIters'])
+
 
 # easy-to-teach evaluation
 evalAcc_l = np.zeros((args['resetNum'] // 10, args['deterResetNums'], args['deterResetIter']))
@@ -87,7 +89,7 @@ def eval_teach_speed(eval_ind, data, team):
 
         for j in range(args['deterResetIter']):
             candidates, targets = data.getBatchData(train_np, args['batchSize'], args['distractNum'])
-            sloss, rloss, message, rewards, _, _, _ = team.forward(targets, candidates, evaluate=False, sOpt=True, rOpt=True,
+            sloss, rloss, message, rewards, _, _, _, _ = team.forward(targets, candidates, evaluate=False, sOpt=True, rOpt=True,
                                                                 stochastic=False)  # speak in evaluate mode
             team.backward(sloss, rloss, sOpt=False)  
 
@@ -104,13 +106,14 @@ with torch.no_grad():
 
 for i in range(args['trainIters']):
     candidates, targets = data.getBatchData(train_np, args['batchSize'], args['distractNum'])
-    sloss, rloss, message, rewards, entropy, _, _ = team.forward(targets, candidates, False, True, True, stochastic=True)
+    sloss, rloss, message, rewards, entropy, listener_entropy, _, _ = team.forward(targets, candidates, False, True, True, stochastic=True)
     team.backward(sloss, rloss)
 
     sloss_l[i] = sloss
     rloss_l[i] = rloss
     trainAccuracy_l[i] = rewards.sum().item() / args['batchSize'] * 100  # reward +1 0
     entropy_l[i] = entropy
+    listener_entropys[i] = listener_entropy
 
     # print intermediate results during training
     if i % 100 == 0:
@@ -148,6 +151,9 @@ np.save(args['fname'] + '/sloss', sloss_l)
 np.save(args['fname'] + '/rloss', rloss_l)
 np.save(args['fname'] + '/trainAcc', trainAccuracy_l)
 np.save(args['fname'] + '/entropy', entropy_l)
+np.save(args['fname'] + '/listener_entropy', listener_entropys)
 np.save(args['fname'] + '/dTopo', dTopo)
 np.save(args['fname'] + '/dEntropy', dEntropy)
 np.save(args['fname'] + '/evalAcc', evalAcc_l)
+torch.save(team.sbot, args['fname'] + '/sbot')
+torch.save(team.rbot, args['fname'] + '/rbot')

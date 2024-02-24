@@ -1,13 +1,14 @@
+"""
+Evaluating teaching speed of language during resets
+
+"""
 from __future__ import print_function
 from __future__ import division
 import torch
 import parser
 import os
 import random
-import copy
 import sys
-import pdb
-
 args = parser.parse()  # parsed argument from CLI
 args['device'] = torch.device("cuda:" + str(args['gpu']) if torch.cuda.is_available() else "cpu")
 if not os.path.exists(args['fname']):
@@ -70,6 +71,7 @@ trainAccuracy_l = np.zeros(args['trainIters'])
 entropy_l = np.zeros(args['trainIters'])
 listener_entropys = np.zeros(args['trainIters'])
 
+
 # easy-to-teach evaluation
 evalAcc_l = np.zeros((args['resetNum'] // 10, args['deterResetNums'], args['deterResetIter']))
 
@@ -78,7 +80,7 @@ dEntropy = np.zeros(args['resetNum']+1)
 
 def eval_teach_speed(eval_ind, data, team):
     # make deterministic, just when training let sender speaks deterministic language
-    print('Evaluate the teaching speed after reset for ' + str(10 * (eval_ind+1)) + ' evaluations')
+    print('Evaluate the teaching speed after reset for ' + str(10 * (eval_ind+1)) + ' receivers')
 
     for i in range(args['deterResetNums']):
         # evaluate before reset
@@ -89,7 +91,8 @@ def eval_teach_speed(eval_ind, data, team):
             candidates, targets = data.getBatchData(train_np, args['batchSize'], args['distractNum'])
             sloss, rloss, message, rewards, _, _, _, _ = team.forward(targets, candidates, evaluate=False, sOpt=True, rOpt=True,
                                                                 stochastic=False)  # speak in evaluate mode
-            team.backward(sloss, rloss, sOpt=False) 
+            team.backward(sloss, rloss, sOpt=False)  
+
             evalAcc_l[eval_ind][i][j] = rewards.sum().item() / args['batchSize'] * 100  # reward +1 0
 
             # print intermediate results during training
@@ -100,6 +103,7 @@ def eval_teach_speed(eval_ind, data, team):
 
 with torch.no_grad():
     dTopo[0], dEntropy[0], prevLangD = util.get_sender_language(team, neural=True)  # evaluate all group performance
+
 for i in range(args['trainIters']):
     candidates, targets = data.getBatchData(train_np, args['batchSize'], args['distractNum'])
     sloss, rloss, message, rewards, entropy, listener_entropy, _, _ = team.forward(targets, candidates, False, True, True, stochastic=True)
@@ -113,7 +117,6 @@ for i in range(args['trainIters']):
 
     # print intermediate results during training
     if i % 100 == 0:
-        print(i)
         record = 'Iteration ' + str(i) \
                  + ' Sender loss ' + str(np.round(sloss_l[i], decimals=4)) \
                  + ' Recever loss ' + str(np.round(rloss_l[i], decimals=4)) \
@@ -122,20 +125,28 @@ for i in range(args['trainIters']):
 
     if i != 0 and i % args['resetIter'] == 0:
         # evaluate before reset
-        print('Periodically Evaluation: : ')
-        print('For the ' + str(i // args['resetIter']) + 'th evaluation')  # start from 1
+        print('Before reset: ')
+        print('For the ' + str(i // args['resetIter']) + 'th receiver')  # start from 1
         with torch.no_grad():
             ind = i // args['resetIter']
+            breakpoint()
             dTopo[ind], dEntropy[ind], curLangD = util.get_sender_language(team, neural=True) # calculate topo similarity before each reset
         if ind % 10 == 0:
-            oldReceiver, oldrOptimizer = team.copyReceiver()
+            if args['reset']:
+                team.freezeSender()
+                eval_teach_speed(ind // 10 - 1, data, team)
+                team.defreezeSender()
+            else:
+                oldReceiver, oldrOptimizer = team.copyReceiver()
 
-            team.freezeSender()
-            eval_teach_speed(ind // 10 - 1, data, team)
-            team.defreezeSender()
+                team.freezeSender()
+                eval_teach_speed(ind // 10 - 1, data, team)
+                team.defreezeSender()
 
-            team.rbot = oldReceiver
-            team.rOptimizer = oldrOptimizer
+                team.rbot = oldReceiver
+                team.rOptimizer = oldrOptimizer
+        if args['reset']:
+            team.resetReceiver()
 
 print('After training for ' + str(args['trainIters']) + ' iterations')
 with torch.no_grad():
@@ -144,7 +155,6 @@ with torch.no_grad():
 
 # speed of teaching the language to a new listener after determinized
 # make params untrainable, testing if sender is not learning
-
 team.freezeSender()
 eval_teach_speed(args['resetNum'] // 10 - 1, data, team)
 
@@ -153,10 +163,8 @@ np.save(args['fname'] + '/rloss', rloss_l)
 np.save(args['fname'] + '/trainAcc', trainAccuracy_l)
 np.save(args['fname'] + '/entropy', entropy_l)
 np.save(args['fname'] + '/listener_entropy', listener_entropys)
-
 np.save(args['fname'] + '/dTopo', dTopo)
 np.save(args['fname'] + '/dEntropy', dEntropy)
 np.save(args['fname'] + '/evalAcc', evalAcc_l)
 torch.save(team.sbot, args['fname'] + '/sbot')
 torch.save(team.rbot, args['fname'] + '/rbot')
-

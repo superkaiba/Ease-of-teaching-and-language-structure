@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.distributions as D
-
+import pdb
 
 class Sender(nn.Module): 
     def __init__(self, args):
@@ -41,7 +41,6 @@ class Sender(nn.Module):
         speak_log_probs = torch.zeros(batch, device=self.device)
         p_log_p = torch.zeros(batch, device=self.device)
         evaluate_probs = torch.ones(batch, device=self.device)
-
         for i in range(self.messageLen):
             vocabLogits = self.hidden2vocab(lstm_out).squeeze(0)  # (batch, vocabSize）
             vocabProbs = F.softmax(vocabLogits, dim=1)  # (batch, vocabSize）
@@ -98,7 +97,6 @@ class Receiver(nn.Module):
         out = torch.matmul(torch.unsqueeze(torch.unsqueeze(outEmbeds, 1), 2), torch.unsqueeze(distraEmbeds, 3))
         # (batch, Kimages, 1, 1)
         out = torch.squeeze(out)
-
         outProbs = F.softmax(out, 1) #(batch, Kimages)
         outLogits = F.log_softmax(out, 1)
         p_log_p = torch.sum(outLogits * outProbs, -1)  # (batch)
@@ -126,6 +124,7 @@ class overlapPerfectSender(nn.Module):
 
     def speak(self, attrVector, stochastic=False):
         batch = attrVector.size()[0]
+        pdb.set_trace()
 
         attrMessages = torch.nonzero(attrVector[:, :self.numColors + self.numShapes])
         messages = attrMessages[:, 1].contiguous().view(batch, self.messageLen)
