@@ -9,6 +9,7 @@ import parser
 import os
 import random
 import sys
+import pdb 
 args = parser.parse()  # parsed argument from CLI
 args['device'] = torch.device("cuda:" + str(args['gpu']) if torch.cuda.is_available() else "cpu")
 if not os.path.exists(args['fname']):
@@ -31,7 +32,8 @@ args['rLearnRate'] = 0.001
 
 args['trainIters'] = 300000 # training
 args['resetNum'] = 50  
-args['resetIter'] = args['trainIters'] // args['resetNum']  # life of a receiver: 6K
+# args['resetIter'] = args['trainIters'] // args['resetNum']  # life of a receiver: 6K
+args['resetIter'] = 200
 args['deterResetNums'] = 30
 args['deterResetIter'] = 1000
 
@@ -129,7 +131,7 @@ for i in range(args['trainIters']):
         print('For the ' + str(i // args['resetIter']) + 'th receiver')  # start from 1
         with torch.no_grad():
             ind = i // args['resetIter']
-            breakpoint()
+            pdb.set_trace()
             dTopo[ind], dEntropy[ind], curLangD = util.get_sender_language(team, neural=True) # calculate topo similarity before each reset
         if ind % 10 == 0:
             if args['reset']:
