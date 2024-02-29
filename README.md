@@ -14,5 +14,3 @@ To reproduce experiments results of perfect language and permuted language, run 
 To reproduce experiments results of sequential reset and no-reset, run `reset50_eval.py` and `noreset50_eval.py`.
 
 To reproduce experiments results of population staggered reset, population simultaneous reset, population no-reset, run `pop_uni.py`, `pop_resetall.py`, and `pop_noreset.py`, respectively.
-
-Test change
