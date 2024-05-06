@@ -10,6 +10,7 @@ from scipy import spatial
 from scipy import stats
 import itertools
 import pdb
+import torch
 #from builtins import dict
 
 
@@ -19,11 +20,11 @@ class Utility():
             setattr(self, key, value)
         # no more than 8 colors and 5 shapes
         self.dataset = data
-        self.ch_vocab = {i: chr(i + 97) for i in range(self.vocabSize)}
-        self.targets_to_attr_dict = self.get_targets_to_attr_dict()
-        self.message_dict = self.get_idx_to_message_dict()
-        self.targetDist = self.get_cos_between_targets_dict()
-        self.msgDist = self.get_levenshtein_dict()
+        # self.ch_vocab = {i: chr(i + 97) for i in range(self.vocabSize)}
+        # self.targets_to_attr_dict = self.get_targets_to_attr_dict()
+        # self.message_dict = self.get_idx_to_message_dict()
+        # self.targetDist = self.get_cos_between_targets_dict()
+        # self.msgDist = self.get_levenshtein_dict()
 
     def get_targets_to_attr_dict(self):
         targets_to_attr_d = {}
@@ -151,6 +152,26 @@ class Utility():
         print('Generated dictionary of levenshtein_distance between messages of size: ', len(levenshtein_dict))
         return levenshtein_dict
 
+    def levenshtein_distance(self, str1, str2):
+        # From https://rosettacode.org/wiki/Levenshtein_distance#Python
+        m = len(str1)
+        n = len(str2)
+        d = [[i] for i in range(1, m + 1)]   # d matrix rows
+        d.insert(0, list(range(0, n + 1)))   # d matrix columns
+        for j in range(1, n + 1):
+            for i in range(1, m + 1):
+                if str1[i - 1] == str2[j - 1]:   # Python (string) is 0-based
+                    substitutionCost = 0
+                else:
+                    substitutionCost = 1
+                d[i].insert(j, min(d[i - 1][j] + 1,
+                                d[i][j - 1] + 1,
+                                d[i - 1][j - 1] + substitutionCost))
+        return d[-1][-1]
+
+    def cos_sim(self, a, b):
+        return a.dot(b) / (np.linalg.norm(a) * np.linalg.norm(b))
+
     def get_cos_between_targets_dict(self):
         cos_target_dict = {}
         all_combinations_targets = self.dataset.getEnumerateData()  # args['numColors'] * args['numShapes']
@@ -160,39 +181,75 @@ class Utility():
         print('Generated dictionary of cosine similarity between targets of size: ', len(cos_target_dict))
         return cos_target_dict
 
-    def topographicMeasure(self, message, targets):
-        # generate message
-        messageL = []
-        for m in message:
-            m_app = self.message_dict[tuple(m.numpy())]
-            messageL.append(m_app)
-        # calculate Levenshtein distances between all pairs of objects' messages
-        Ldistance = np.zeros(len(messageL) * len(messageL))
-        for x, i in enumerate(messageL):
-            for y, j in enumerate(messageL):
-                Ldistance[x * len(messageL) + y] = self.msgDist[(i, j)]  # only for category data
-        # calculate cosine similarity between all pairs of vectors
-        import scipy
-        cosSimilarity = np.zeros(len(targets) * len(targets))
-        for x, i in enumerate(targets):
-            for y, j in enumerate(targets):
-                cosSimilarity[x * len(targets) + y] = self.targetDist[(tuple(i), tuple(j))]
-        topographicM, pValue = scipy.stats.spearmanr(Ldistance, cosSimilarity)
-        return -topographicM, pValue
+    def topographicMeasure(self, message, targets, num_samples=100000):
+        # Sample num_samples pairs of objects
+        pair_first = np.random.choice(np.arange(len(targets)), num_samples, replace=True)
+        pair_second = np.random.choice(np.arange(len(targets)), num_samples, replace=True)
+        pairs = list(zip(pair_first, pair_second))
 
-    def get_sender_language(self, team, neural):
+        # Get cosine similarity and levenshtein distances for all sampled pairs
+        cos_sim = []
+        levenshtein_dist = []
+        for i, p in enumerate(pairs):
+            p1, p2 = p
+            cos_sim.append(self.cos_sim(targets[p1], targets[p2]))
+            levenshtein_dist.append(self.levenshtein(message[p1], message[p2]))
+        
+        topographic_similarity, p_value = scipy.stats.spearmanr(levenshtein_dist, cos_sim)
+        return -topographic_similarity, p_value
+
+        # # generate message
+        # messageL = []
+        # for m in message:
+        #     m_app = self.message_dict[tuple(m.cpu().numpy())]
+        #     messageL.append(m_app)
+        # # calculate Levenshtein distances between all pairs of objects' messages
+        # Ldistance = np.zeros(len(messageL) * len(messageL))
+        # for x, i in enumerate(messageL):
+        #     for y, j in enumerate(messageL):
+        #         Ldistance[x * len(messageL) + y] = self.msgDist[(i, j)]  # only for category data
+        # # calculate cosine similarity between all pairs of vectors
+        # import scipy
+        # cosSimilarity = np.zeros(len(targets) * len(targets))
+        # for x, i in enumerate(targets):
+        #     for y, j in enumerate(targets):
+        #         cosSimilarity[x * len(targets) + y] = self.targetDist[(tuple(i), tuple(j))]
+        # topographicM, pValue = scipy.stats.spearmanr(Ldistance, cosSimilarity)
+        # return -topographicM, pValue
+
+    def get_sender_language(self, team, neural, n_samples = 3, topo_n_samples = 10000):
+        # get all possible objects
         all_instances = self.dataset.getEnumerateData()
-        eMessage, deter_entropy, speak_probs = team.senderForward(all_instances, neural)
 
-        topoM, pValue = self.topographicMeasure(eMessage.cpu(), all_instances)
+        # sample n_samples sentences for each object
+        sentences = []
+        for i in range(n_samples):
+            eMessage, deter_entropy, speak_probs = team.senderForward(all_instances, neural)
+            sentences.append(eMessage)
+        sentences = torch.stack(sentences, dim=1)
+
+        # calculate topographic similarity for subsample of size topo_n_samples
+        n_objects, n_samples, sentence_length = sentences.size()
+
+        # Number of PAIRS
+        topo_n_samples = min(topo_n_samples, n_objects * n_objects)
+        topoM, pValue = self.topographicMeasure(sentences[:,0,:], all_instances, topo_n_samples)
         print('Topographic Messure for all instance combinations is ', '{:.4f}'.format(topoM), 'and p value is ', pValue, '\n')
 
-        print('The language the sender is speaking: ')
-        trainD = self.probeLanguage(eMessage.cpu(), all_instances, speak_probs.cpu())
-        df = self.drawTable(trainD)
-        if self.jupyter:
-            display(df)
-        else:
-            print(df.to_string())
-        print()
-        return topoM, deter_entropy, dict(trainD)
+        permutation = np.random.permutation(len(sentences))
+        sentences = sentences[permutation]
+        all_instances = all_instances[permutation]
+
+        n_objects, object_representation_length = all_instances.shape
+        all_instances = all_instances.reshape(n_objects, object_representation_length)
+        all_instances = np.repeat(all_instances, n_samples, axis=0)
+        sentences = sentences.reshape(-1, sentence_length)
+        # print('The language the sender is speaking: ')
+        # trainD = self.probeLanguage(eMessage.cpu(), all_instances, speak_probs.cpu())
+        # df = self.drawTable(trainD)
+        # if self.jupyter:
+        #     display(df)
+        # else:
+        #     print(df.to_string())
+        # print()
+        return topoM, deter_entropy, sentences, all_instances

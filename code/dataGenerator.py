@@ -1,10 +1,11 @@
 # Generate data
 import numpy as np
 import random
-
-
-class Dataset:
-    def __init__(self, numColors, numShapes, attrSize):
+import itertools
+import pdb
+import torch
+class Dataset2:
+    def __init__(self, numColors, numShapes, attrSize, args):
         self.numColors = numColors  # number of colors appeared in the dataset
         self.numShapes = numShapes  # number of shapes appeared in the dataset
         self.attrSize = attrSize  # bits of features
@@ -52,3 +53,42 @@ class Dataset:
                 attrVector[i * self.numShapes + j][i] = 1
                 attrVector[i * self.numShapes + j][self.numColors + j] = 1
         return attrVector
+
+class Dataset:
+    def __init__(self, args):
+        self.args = args
+        self.all_combos = None
+
+    def getBatchData(self, a1, a2, a3):
+        # We need batch because we generate different instances consisting of all the distractors and target within
+        # sample train batch from data
+        # return numpy array [batch, attrLength]
+        batch_size = self.args["batchSize"]
+        distract_num = self.args["distractNum"]
+
+        data = np.zeros([batch_size, distract_num, self.args["n_values"] * self.args["n_attributes"]], dtype=np.float32)
+        for i in range(batch_size):
+            for j in range(distract_num):
+                for k in range(self.args["n_attributes"]):
+                    l = np.random.randint(self.args["n_values"])
+                    data[i][j][k * self.args["n_values"] + l] = 1      
+
+        # extract one target from distract tuples
+        targetInd = np.random.randint(distract_num, size=(batch_size), dtype=int)
+        targets = data[np.arange(batch_size), targetInd, :]
+        return data, targets, torch.tensor(targetInd, device="cuda") #(batch, distract, attrSize) (batch, attrSize)
+
+    def getEnumerateDataIdxes(self):
+        lists = [np.arange(self.args["n_values"]) for i in range(self.args["n_attributes"])]
+        idxes = np.array(list(itertools.product(*lists)))
+        return idxes
+
+    def getEnumerateData(self):
+        if self.all_combos is None:
+            self.all_combos = np.zeros([self.args["n_values"] ** self.args["n_attributes"], self.args["n_attributes"] * self.args["n_values"]], dtype=np.float32)
+            idxes = self.getEnumerateDataIdxes()
+
+            for i, idx in enumerate(idxes):
+                for j, val in enumerate(idx):
+                    self.all_combos[i][j * self.args["n_values"] + val] = 1
+        return self.all_combos

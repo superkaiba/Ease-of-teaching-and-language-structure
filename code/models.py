@@ -10,14 +10,31 @@ import torch.nn.functional as F
 import torch.distributions as D
 import pdb
 
+class MLP(nn.Module):
+    def __init__(self, input_size, hidden_sizes, output_size):
+        super(MLP, self).__init__()
+        self.input_size = input_size
+        self.hidden_sizes = hidden_sizes
+        self.output_size = output_size
+
+        self.layers = nn.ModuleList()
+        self.layers.append(nn.Linear(input_size, hidden_sizes[0]))
+        for i in range(1, len(hidden_sizes)):
+            self.layers.append(nn.Linear(hidden_sizes[i-1], hidden_sizes[i]))
+        self.layers.append(nn.Linear(hidden_sizes[-1], output_size))
+
+    def forward(self, x):
+        for layer in self.layers[:-1]:
+            x = F.relu(layer(x))
+        return self.layers[-1](x)
+
 class Sender(nn.Module): 
     def __init__(self, args):
         super(Sender, self).__init__()
 
         for key, value in args.items():
             setattr(self, key, value)
-
-        self.attr2hidden = nn.Linear(self.attrSize, self.hiddenSize).to(self.device)
+        self.attr2hidden = nn.Linear(self.n_values * self.n_attributes, self.hiddenSize).to(self.device)
         self.speaklstm = nn.LSTM(self.vocabSize, self.hiddenSize).to(self.device)  # vocabulary represented by one-hot vector
         self.hidden2vocab = nn.Linear(self.hiddenSize, self.vocabSize).to(self.device)
         # state in lstm
@@ -65,6 +82,61 @@ class Sender(nn.Module):
                                                                               (self.hiddenState, self.cellState))
         return message, speak_log_probs, p_log_p, evaluate_probs  # return character index in vocab
 
+class MLPReceiver(nn.Module):
+    def __init__(self, args):
+        super(MLPReceiver, self).__init__()
+
+        for key, value in args.items():
+            setattr(self, key, value)
+
+        self.nn = MLP(
+            self.vocabSize * self.messageLen, 
+            [self.listenerHiddenSize for _ in range(self.listenerNumLayers)], 
+            self.n_values * self.n_attributes
+            ).to(self.device)
+
+        self.attr2embed = nn.Linear(self.n_values * self.n_attributes, self.hiddenSize).to(self.device)
+        self.hidden2embed = nn.Linear(self.hiddenSize, self.hiddenSize).to(self.device)
+
+    def init_hidden(self, batch):
+        self.hiddenState = torch.zeros((1, batch, self.hiddenSize), device=self.device)
+        self.cellState = torch.zeros((1, batch, self.hiddenSize), device=self.device)
+
+    def listen(self, message):  # message (batch, message_len)
+        batch = message.size()[0]
+        # convert message token to one hot vector
+        chEmbeds = torch.zeros((batch * self.messageLen, self.vocabSize), device=self.device)
+        s_message = message.view(-1, 1)
+        tokenembeds = chEmbeds.scatter_(1, s_message, 1)
+        tokenembeds = tokenembeds.view(batch, self.messageLen, self.vocabSize)  # (batch, self.messageLen, self.vocabSize)
+        self.hiddenState = self.nn(tokenembeds.view(batch, -1))  # (batch, hidden_size)
+        # lstm_out, (self.hiddenState, self.cellState) = self.listenlstm(torch.transpose(tokenembeds, 0, 1), (self.hiddenState, self.cellState))
+
+    def predict(self, distrImages, stochastic=True):
+        batch_size = distrImages.size()[0]
+
+        self.hiddenState = self.hiddenState.view(batch_size, self.n_attributes, self.n_values) 
+        softmaxed = F.softmax(self.hiddenState, dim=-1).view(batch_size, -1)  # (batch, num_values * num_attributes)
+        dot_products = (torch.unsqueeze(softmaxed, 1) * distrImages).sum(-1)  # (batch, num_distract)
+        # # distrImages is [batchSize, num_distract, num_values * num_attributes]
+        # outEmbeds = self.hidden2embed(torch.squeeze(self.hiddenState, 0))  # (batch, embedding_dim)
+        # distraEmbeds = self.attr2embed(distrImages)  # (batch, Kimages, embedding_dim)
+        # out = torch.matmul(torch.unsqueeze(torch.unsqueeze(outEmbeds, 1), 2), torch.unsqueeze(distraEmbeds, 3))
+        # # (batch, Kimages, 1, 1)
+        # out = torch.squeeze(out)
+        # outProbs = F.softmax(out, 1) #(batch, Kimages)
+        # outLogits = F.log_softmax(out, 1)
+        # p_log_p = torch.sum(outLogits * outProbs, -1)  # (batch)
+        # if stochastic:
+        #     outDistr = D.Categorical(outProbs)
+        #     action_ind = outDistr.sample()  # (batch)
+        #     saved_log_probs = outDistr.log_prob(action_ind)
+        #     pred_probs = torch.exp(saved_log_probs)
+        # else:
+        #     pred_probs, action_ind = torch.max(outProbs, 1)  # (batch)
+        #     saved_log_probs = torch.log(pred_probs)
+        return dot_products
+
 class Receiver(nn.Module):
     def __init__(self, args):
         super(Receiver, self).__init__()
@@ -72,7 +144,7 @@ class Receiver(nn.Module):
         for key, value in args.items():
             setattr(self, key, value)
 
-        self.attr2embed = nn.Linear(self.attrSize, self.hiddenSize).to(self.device)
+        self.attr2embed = nn.Linear(self.n_values * self.n_attributes, self.hiddenSize).to(self.device)
         self.listenlstm = nn.LSTM(self.vocabSize, self.hiddenSize).to(self.device)
         self.hidden2embed = nn.Linear(self.hiddenSize, self.hiddenSize).to(self.device)
 
@@ -89,6 +161,7 @@ class Receiver(nn.Module):
         s_message = message.view(-1, 1)
         tokenembeds = chEmbeds.scatter_(1, s_message, 1)
         tokenembeds = tokenembeds.view(batch, self.messageLen, self.vocabSize)  # (batch, self.messageLen, self.vocabSize)
+        
         lstm_out, (self.hiddenState, self.cellState) = self.listenlstm(torch.transpose(tokenembeds, 0, 1), (self.hiddenState, self.cellState))
 
     def predict(self, distrImages, stochastic=True):
@@ -124,7 +197,6 @@ class overlapPerfectSender(nn.Module):
 
     def speak(self, attrVector, stochastic=False):
         batch = attrVector.size()[0]
-        pdb.set_trace()
 
         attrMessages = torch.nonzero(attrVector[:, :self.numColors + self.numShapes])
         messages = attrMessages[:, 1].contiguous().view(batch, self.messageLen)
