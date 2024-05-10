@@ -16,6 +16,7 @@ def parse():
 
     parser.add_argument('--gpu', type=int, default=0, help='which gpu if we use gpu')
     parser.add_argument('--fname', type=str, default='test', help='folder name to save results')
+    parser.add_argument('--expname', type=str, default='test')
     parser.add_argument('--seed', type=int, default=0)
     parser.add_argument('--jupyter', action='store_true') 
     parser.add_argument('--slambda', type=float, default=0.1, help='speaker regularization hyperparameter')
@@ -32,7 +33,7 @@ def parse():
     parser.add_argument('--messageLen', type=int, default=4, help='length of the message')
     parser.add_argument('--topo_eval_interval', type=int, default=50000, help='interval of topology evaluation')
     parser.add_argument('--batchSize', type=int, default=100, help='batch size')
-    parser.add_argument('--trainIters', type=int, default=50000, help='number of training iterations')
+    parser.add_argument('--trainIters', type=int, default=300000, help='number of training iterations')
     parser.add_argument('--sLearnRate', type=float, default=0.001, help='speaker learning rate')
     parser.add_argument('--rLearnRate', type=float, default=0.001, help='listener learning rate')
     parser.add_argument('--resetNum', type=int, default=50, help='number of resets')
@@ -50,6 +51,6 @@ def parse():
     datetime_string = current_datetime.strftime("%b_%d_%Y_%H:%M:%S")
     args_dict = vars(parser.parse_args()) # convert python object to dict
     args_dict['device'] = torch.device("cuda:" + str(args_dict['gpu']) if torch.cuda.is_available() else "cpu")
-    args_dict['fname'] = f"{args_dict['fname']}/vocab_size_{args_dict['vocabSize']}_message_len_{args_dict['messageLen']}_hidden_size_{args_dict['hiddenSize']}_reset={str(args_dict['reset'])}_resetIter={str(args_dict['resetIter'])}/{datetime_string}"
+    args_dict['fname'] = f"{args_dict['fname']}/{args_dict['expname']}/{datetime_string}"
     
     return args_dict

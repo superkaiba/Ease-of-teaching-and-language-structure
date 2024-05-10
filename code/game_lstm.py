@@ -40,17 +40,24 @@ class GuessGame:
         m, speak_log_probs, speak_p_log_p, evaluate_probs = self.sbot.speak(targetsTensor, stochastic)
 
         self.rbot.listen(m)
-
         candidatesTensor = torch.from_numpy(candidates).to(self.device)
-        p_candidates = self.rbot.predict(candidatesTensor, stochastic)
-        # predicted = torch.argmax(p_candidates,dim=-1)
-        # loss = self.loss_function(p_candidates, targets_idx)
-        # accuracy = torch.sum(predicted == targets_idx).item() / batch
+        p_action, pred_log_probs, pred_p_log_p, pred_probs = self.rbot.predict(candidatesTensor, stochastic)
+
         predicts = candidatesTensor[np.arange(batch), p_action, :]
-        mattersIndex = self.args["n_values"] * self.args["n_attributes"]
+        mattersIndex = self.n_attributes * self.n_values
         tsum = torch.LongTensor(batch).fill_(mattersIndex).to(self.device)
-        psum = torch.eq(predicts[:, 0:mattersIndex], targetsTensor[:, 0:mattersIndex]).sum(1)  # true if predicts and targets match at every index
-        # predicts predicts color and shape, 2 1's per row
+        psum = torch.eq(predicts[:, 0:mattersIndex], targetsTensor[:, 0:mattersIndex]).sum(1) 
+
+        # candidatesTensor = torch.from_numpy(candidates).to(self.device)
+        # p_candidates = self.rbot.predict(candidatesTensor, stochastic)
+        # # predicted = torch.argmax(p_candidates,dim=-1)
+        # # loss = self.loss_function(p_candidates, targets_idx)
+        # # accuracy = torch.sum(predicted == targets_idx).item() / batch
+        # predicts = candidatesTensor[np.arange(batch), p_action, :]
+        # mattersIndex = self.args["n_values"] * self.args["n_attributes"]
+        # tsum = torch.LongTensor(batch).fill_(mattersIndex).to(self.device)
+        # psum = torch.eq(predicts[:, 0:mattersIndex], targetsTensor[:, 0:mattersIndex]).sum(1)  # true if predicts and targets match at every index
+        # # predicts predicts color and shape, 2 1's per row
         # targets_idx = np.argmax(targets, axis=1)
         # candidates_idx = np.argmax(candidates, axis=2)
         # correct_mask = (np.expand_dims(targets_idx, axis=1) == candidates_idx)
@@ -71,15 +78,13 @@ class GuessGame:
     def backward(self, sloss, rloss, sOpt=True, rOpt=True): # sOpt is false when we do not need update sender
         if sOpt:
             self.sOptimizer.zero_grad()
-        if rOpt:
-            self.rOptimizer.zero_grad()
-        
-        loss.backward()
-
-        if sOpt:
+            sloss.backward()
             self.sOptimizer.step()
         if rOpt:
+            self.rOptimizer.zero_grad()
+            rloss.backward()
             self.rOptimizer.step()
+
 
     def senderForward(self, targets, neural):
         targetsTensor = torch.from_numpy(targets).to(self.device) 
@@ -115,7 +120,7 @@ class GuessGame:
 
     def resetReceiver(self, sOpt=True): # sOpt could be false, when sender only used for evaluation
         self.rbot.attr2embed.reset_parameters()
-        self.nn.reset_parameters()
+        # self.rbot.nn.reset_parameters()
         # self.rbot.listenlstm.reset_parameters()
         self.rbot.hidden2embed.reset_parameters()
         print('\nParameters in the Receiver are reset')

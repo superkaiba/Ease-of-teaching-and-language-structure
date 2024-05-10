@@ -27,7 +27,7 @@ import numpy as np
 if args['population']:
   from popgame import popGuessGame
 else:
-  from game_lstm import GuessGame
+  from game import GuessGame
 
 torch.manual_seed(args['seed'])
 torch.cuda.manual_seed(args['seed'])
@@ -44,24 +44,25 @@ util = utility.Utility(args, data)
 
 metrics_saver = Saver(args['fname'], ['i', 'loss', 'train_accuracy', 'topo_measure'])
 
-with torch.no_grad():
-    topo_measure, d_entropy, sentences, corresponding_objects = util.get_sender_language(team, neural=True)  # evaluate all group performance
-
+# with torch.no_grad():
+#     topo_measure, d_entropy, sentences, corresponding_objects = util.get_sender_language(team, neural=True)  # evaluate all group performance
+# setfacl -Rdm user:vedant.shah:rwx $SCRATCH/causal_imputation/data
+# setfacl -Rm  user:vedant.shah:rwx $SCRATCH/causal_imputation/data
+# setfacl -m   user:vedant.shah:x   $SCRATCH/causal_imputation
+# setfacl -m   user:vedant.shah:x   $SCRATCH
 
 for i in range(args['trainIters']):
     candidates, targets, targets_idx = data.getBatchData(None, args['batchSize'], args['distractNum'])
 
-    sloss, rloss, rewards = team.forward(targets, targets_idx, candidates, False, True, True, stochastic=True)
-    team.backward(sloss, rloss)
-    accuracy = rewards.sum().item() / args['batchSize'] * 100
+    loss, train_accuracy, message, predicted = team.forward(targets, targets_idx, candidates, False, True, True, stochastic=True)
+    team.backward(loss)
     # print intermediate results during training
     if i % 100 == 0:
         record = 'Iteration ' + str(i) \
-                + ' Sender Loss ' + str(np.round(sloss.item(), decimals=4)) \
-                + ' Receiver Loss ' + str(np.round(rloss.item(), decimals=4)) \
-                + ' Training accuracy ' + str(np.round(accuracy * 100, decimals=2)) + '%\n'
+                + ' Loss ' + str(np.round(loss.item(), decimals=4)) \
+                + ' Training accuracy ' + str(np.round(train_accuracy * 100, decimals=2)) + '%\n'
         print(record)
-        wandb.log({'i': i, 'sender loss': sloss.item(), 'receiver loss': rloss.item(), 'train_accuracy': accuracy}, step=i)
+        wandb.log({'i': i, 'loss': loss.item(), 'train_accuracy': train_accuracy}, step=i)
 
     if i % args['topo_eval_interval'] == 0:
         with torch.no_grad():
@@ -80,8 +81,8 @@ for i in range(args['trainIters']):
     if i % args['saveInterval'] == 0:
         metrics = {
             "i": i,
-            "sender loss":sloss,
-            "train_accuracy": accuracy, 
+            "loss":loss,
+            "train_accuracy": train_accuracy, 
             # "entropy": entropy, 
             # "listener_entropy": listener_entropy, 
             "topo_measure": topo_measure, 
@@ -98,11 +99,10 @@ np.save(args['fname'] + '/z.npy', corresponding_objects)
 
 metrics = {
         "i": i,
-        "sender loss": sloss,
-        "receiver loss": rloss,
+        "loss": loss,
         # "sender_loss": sloss, 
         # "receiver_loss": rloss, 
-        "train_accuracy": accuracy, 
+        "train_accuracy": train_accuracy, 
         # "entropy": entropy, 
         # "listener_entropy": listener_entropy, 
         "topo_measure": topo_measure, 

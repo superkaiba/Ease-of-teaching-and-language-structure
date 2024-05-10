@@ -39,10 +39,7 @@ class GuessGame:
             self.rbot.train()
         m, speak_log_probs, speak_p_log_p, evaluate_probs = self.sbot.speak(targetsTensor, stochastic)
 
-        self.rbot.listen(m)
-
-        candidatesTensor = torch.from_numpy(candidates).to(self.device)
-        p_candidates = self.rbot.predict(candidatesTensor, stochastic)
+        p_candidates = self.rbot.predict(m, candidates, stochastic)
         predicted = torch.argmax(p_candidates,dim=-1)
         loss = self.loss_function(p_candidates, targets_idx)
         accuracy = torch.sum(predicted == targets_idx).item() / batch

@@ -112,12 +112,20 @@ class MLPReceiver(nn.Module):
         self.hiddenState = self.nn(tokenembeds.view(batch, -1))  # (batch, hidden_size)
         # lstm_out, (self.hiddenState, self.cellState) = self.listenlstm(torch.transpose(tokenembeds, 0, 1), (self.hiddenState, self.cellState))
 
-    def predict(self, distrImages, stochastic=True):
-        batch_size = distrImages.size()[0]
+    def predict(self, message, candidates, stochastic=True):
+        batch_size = candidates.shape[0]
+        candidates_tensor = torch.from_numpy(candidates).to(self.device)
 
-        self.hiddenState = self.hiddenState.view(batch_size, self.n_attributes, self.n_values) 
-        softmaxed = F.softmax(self.hiddenState, dim=-1).view(batch_size, -1)  # (batch, num_values * num_attributes)
-        dot_products = (torch.unsqueeze(softmaxed, 1) * distrImages).sum(-1)  # (batch, num_distract)
+        chEmbeds = torch.zeros((batch_size * self.messageLen, self.vocabSize), device=self.device)
+        s_message = message.view(-1, 1)
+        tokenembeds = chEmbeds.scatter_(1, s_message, 1)
+        tokenembeds = tokenembeds.view(batch_size, self.messageLen, self.vocabSize)
+
+        output = self.nn(tokenembeds.view(batch_size, -1))
+        output = output.view(batch_size, self.n_attributes, self.n_values) 
+        softmaxed = F.softmax(output, dim=-1).view(batch_size, -1)  # (batch, num_values * num_attributes)
+        dot_products = (torch.unsqueeze(softmaxed, 1) * candidates_tensor).sum(-1)  # (batch, num_distract)
+        
         # # distrImages is [batchSize, num_distract, num_values * num_attributes]
         # outEmbeds = self.hidden2embed(torch.squeeze(self.hiddenState, 0))  # (batch, embedding_dim)
         # distraEmbeds = self.attr2embed(distrImages)  # (batch, Kimages, embedding_dim)

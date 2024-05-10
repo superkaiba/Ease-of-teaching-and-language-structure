@@ -35,7 +35,7 @@ python /home/mila/t/thomas.jiralerspong/kolmogorov/Ease-of-teaching-and-language
     --hiddenSize 100 \
     --resetIter 10000
 
-python /home/mila/t/thomas.jiralerspong/kolmogorov/Ease-of-teaching-and-language-structure/code/main.py \
+python /home/mila/t/thomas.jiralerspong/kolmogorov/Ease-of-teaching-and-language-structure/code/main_mlp.py \
     --reset False \
     --fname $SCRATCH/kolmogorov/ease_of_teaching/results/new \
     --wandbdir $SCRATCH/kolmogorov/ease_of_teaching \
@@ -43,8 +43,9 @@ python /home/mila/t/thomas.jiralerspong/kolmogorov/Ease-of-teaching-and-language
     --n_attributes 2 \
     --n_values 10 \
     --vocabSize 10 \
-    --messageLen 3 \
+    --messageLen 2 \
     --hiddenSize 100 \
+    --listenerHiddenSize 1000 \
     --resetIter 10000
 
 python /home/mila/t/thomas.jiralerspong/kolmogorov/Ease-of-teaching-and-language-structure/code/main.py \

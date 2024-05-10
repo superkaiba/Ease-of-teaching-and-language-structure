@@ -10,38 +10,14 @@ import os
 import random
 import sys
 import pdb 
+import wandb
+
+from metrics_saver import Saver
 args = parser.parse()  # parsed argument from CLI
-args['device'] = torch.device("cuda:" + str(args['gpu']) if torch.cuda.is_available() else "cpu")
+run = wandb.init(entity="yoshua-bengio", dir=args['wandbdir'], group=args['wandbgroup'], config=args, project="ease_of_teaching")
+
 if not os.path.exists(args['fname']):
     os.makedirs(args['fname'])
-
-# dataset hyperparameters
-args['numColors'] = 8 
-args['numShapes'] = 4 
-args['attrSize'] = args['numColors'] + args['numShapes']  # colors + shapes
-
-# game settings
-args['vocabSize'] = 8
-args['messageLen'] = 2
-args['distractNum'] = 5  # including targets
-
-# training hyperparameters
-args['batchSize'] = 100  # total train data = batchSize * numIters
-args['sLearnRate'] = 0.001  
-args['rLearnRate'] = 0.001  
-
-args['trainIters'] = 300000 # training
-args['resetNum'] = 50  
-# args['resetIter'] = args['trainIters'] // args['resetNum']  # life of a receiver: 6K
-args['resetIter'] = 200
-args['deterResetNums'] = 30
-args['deterResetIter'] = 1000
-
-# population of receivers training
-args['population'] = False
-
-# model hyperparameters
-args['hiddenSize'] = 100 
 
 print(args)
 
@@ -51,7 +27,7 @@ import numpy as np
 if args['population']:
   from popgame import popGuessGame
 else:
-  from game import GuessGame
+  from game_lstm import GuessGame
 
 torch.manual_seed(args['seed'])
 torch.cuda.manual_seed(args['seed'])
@@ -59,114 +35,81 @@ np.random.seed(args['seed'])
 random.seed(args['seed'])
 
 torch.backends.cudnn.deterministic=True
-
 # @title Train
 team = GuessGame(args)
+
 # get data
-data = Dataset(args['numColors'], args['numShapes'], args['attrSize'])
-train_np = data.getTrain()
+data = Dataset(args)
 util = utility.Utility(args, data)
 
-sloss_l = np.zeros(args['trainIters'])
-rloss_l = np.zeros(args['trainIters'])
-trainAccuracy_l = np.zeros(args['trainIters'])
-entropy_l = np.zeros(args['trainIters'])
-listener_entropys = np.zeros(args['trainIters'])
-
-
-# easy-to-teach evaluation
-evalAcc_l = np.zeros((args['resetNum'] // 10, args['deterResetNums'], args['deterResetIter']))
-
-dTopo = np.zeros(args['resetNum']+1)
-dEntropy = np.zeros(args['resetNum']+1)
-
-def eval_teach_speed(eval_ind, data, team):
-    # make deterministic, just when training let sender speaks deterministic language
-    print('Evaluate the teaching speed after reset for ' + str(10 * (eval_ind+1)) + ' receivers')
-
-    for i in range(args['deterResetNums']):
-        # evaluate before reset
-        print('Reset the ' + str(i+1) + 'th receiver with deterministic language')  # start from 1
-        team.resetReceiver(sOpt=False)
-
-        for j in range(args['deterResetIter']):
-            candidates, targets = data.getBatchData(train_np, args['batchSize'], args['distractNum'])
-            sloss, rloss, message, rewards, _, _, _, _ = team.forward(targets, candidates, evaluate=False, sOpt=True, rOpt=True,
-                                                                stochastic=False)  # speak in evaluate mode
-            team.backward(sloss, rloss, sOpt=False)  
-
-            evalAcc_l[eval_ind][i][j] = rewards.sum().item() / args['batchSize'] * 100  # reward +1 0
-
-            # print intermediate results during training
-            if j == 0 or (j + 1) % 100 == 0:
-                record = 'Iteration ' + str(i * args['deterResetIter'] + j + 1) \
-                         + ' Training accuracy ' + str(np.round(evalAcc_l[eval_ind][i][j], decimals=2)) + '%\n'
-                print(record)
+metrics_saver = Saver(args['fname'], ['i', 'sender_loss', 'receiver_loss', 'train_accuracy', 'topo_measure'])
 
 with torch.no_grad():
-    dTopo[0], dEntropy[0], prevLangD = util.get_sender_language(team, neural=True)  # evaluate all group performance
+    topo_measure, d_entropy, sentences, corresponding_objects = util.get_sender_language(team, neural=True)  # evaluate all group performance
+
 
 for i in range(args['trainIters']):
-    candidates, targets = data.getBatchData(train_np, args['batchSize'], args['distractNum'])
-    sloss, rloss, message, rewards, entropy, listener_entropy, _, _ = team.forward(targets, candidates, False, True, True, stochastic=True)
+    candidates, targets, targets_idx = data.getBatchData(None, args['batchSize'], args['distractNum'])
+
+    sloss, rloss, rewards = team.forward(targets, targets_idx, candidates, False, True, True, stochastic=True)
     team.backward(sloss, rloss)
-
-    sloss_l[i] = sloss
-    rloss_l[i] = rloss
-    trainAccuracy_l[i] = rewards.sum().item() / args['batchSize'] * 100  # reward +1 0
-    entropy_l[i] = entropy
-    listener_entropys[i] = listener_entropy
-
+    train_accuracy = rewards.sum().item() / args['batchSize'] 
     # print intermediate results during training
     if i % 100 == 0:
         record = 'Iteration ' + str(i) \
-                 + ' Sender loss ' + str(np.round(sloss_l[i], decimals=4)) \
-                 + ' Recever loss ' + str(np.round(rloss_l[i], decimals=4)) \
-                 + ' Training accuracy ' + str(np.round(trainAccuracy_l[i], decimals=2)) + '%\n'
+                + ' Sender Loss ' + str(np.round(sloss.item(), decimals=4)) \
+                + ' Receiver Loss ' + str(np.round(rloss.item(), decimals=4)) \
+                + ' Training accuracy ' + str(np.round(train_accuracy * 100, decimals=2)) + '%\n'
         print(record)
+        wandb.log({'i': i, 'sender loss': sloss.item(), 'receiver loss': rloss.item(), 'train_accuracy': train_accuracy}, step=i)
 
-    if i != 0 and i % args['resetIter'] == 0:
-        # evaluate before reset
-        print('Before reset: ')
-        print('For the ' + str(i // args['resetIter']) + 'th receiver')  # start from 1
+    if i % args['topo_eval_interval'] == 0:
         with torch.no_grad():
-            ind = i // args['resetIter']
-            pdb.set_trace()
-            dTopo[ind], dEntropy[ind], curLangD = util.get_sender_language(team, neural=True) # calculate topo similarity before each reset
-        if ind % 10 == 0:
-            if args['reset']:
-                team.freezeSender()
-                eval_teach_speed(ind // 10 - 1, data, team)
-                team.defreezeSender()
-            else:
-                oldReceiver, oldrOptimizer = team.copyReceiver()
+            topo_measure, d_entropy, sentences, corresponding_objects = util.get_sender_language(team, neural=True, topo_n_samples=10000) # calculate topo similarity before each reset
+        torch.save(sentences, args['fname'] + f'/i={i}_topo_measure={topo_measure}_accuracy={train_accuracy}_w.pt')
+        torch.save(corresponding_objects, args['fname'] + f'/i={i}_topo_measure={topo_measure}_accuracy={train_accuracy}_z.pt')
+        # np.save(args['fname'] + f'/i={i}_topo_measure={topo_measure}_accuracy={train_accuracy}_w.npy', sentences.cpu())
+        # np.save(args['fname'] + f'/i={i}_topo_measure={topo_measure}_accuracy={train_accuracy}_z.npy', corresponding_objects)
+        wandb.log({'i': i, 'topo_measure': topo_measure}, step=i)
 
-                team.freezeSender()
-                eval_teach_speed(ind // 10 - 1, data, team)
-                team.defreezeSender()
-
-                team.rbot = oldReceiver
-                team.rOptimizer = oldrOptimizer
-        if args['reset']:
-            team.resetReceiver()
+    if i != 0 and i % args['resetIter'] == 0 and args['reset']:
+        print('Resetting receiver')
+        print('Currently on receiver #' + str(i // args['resetIter']))
+        team.resetReceiver()
+    
+    if i % args['saveInterval'] == 0:
+        metrics = {
+            "i": i,
+            "sender_loss":sloss,
+            "train_accuracy": train_accuracy, 
+            "receiver_loss": rloss,
+            # "entropy": entropy, 
+            # "listener_entropy": listener_entropy, 
+            "topo_measure": topo_measure, 
+            # "d_entropy": d_entropy
+            }
+        metrics_saver.save(metrics)
 
 print('After training for ' + str(args['trainIters']) + ' iterations')
 with torch.no_grad():
-    dTopo[-1], dEntropy[-1], langD = util.get_sender_language(team, neural=True) # evaluate all group performance
-    np.save(args['fname'] + '/langDict', langD)
+    topo_measure, d_entropy, sentences, corresponding_objects = util.get_sender_language(team, neural=True) # evaluate all group performance
 
-# speed of teaching the language to a new listener after determinized
-# make params untrainable, testing if sender is not learning
-team.freezeSender()
-eval_teach_speed(args['resetNum'] // 10 - 1, data, team)
+np.save(args['fname'] + '/w.npy', sentences.cpu())
+np.save(args['fname'] + '/z.npy', corresponding_objects)
 
-np.save(args['fname'] + '/sloss', sloss_l)
-np.save(args['fname'] + '/rloss', rloss_l)
-np.save(args['fname'] + '/trainAcc', trainAccuracy_l)
-np.save(args['fname'] + '/entropy', entropy_l)
-np.save(args['fname'] + '/listener_entropy', listener_entropys)
-np.save(args['fname'] + '/dTopo', dTopo)
-np.save(args['fname'] + '/dEntropy', dEntropy)
-np.save(args['fname'] + '/evalAcc', evalAcc_l)
+metrics = {
+        "i": i,
+        "sender_loss": sloss,
+        "receiver_loss": rloss,
+        # "sender_loss": sloss, 
+        # "receiver_loss": rloss, 
+        "train_accuracy": train_accuracy, 
+        # "entropy": entropy, 
+        # "listener_entropy": listener_entropy, 
+        "topo_measure": topo_measure, 
+        # "d_entropy": d_entropy
+        }
+metrics_saver.save(metrics)
+
 torch.save(team.sbot, args['fname'] + '/sbot')
 torch.save(team.rbot, args['fname'] + '/rbot')
